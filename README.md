@@ -54,6 +54,16 @@ git push -u origin main
 
 3. In Vercel → Project Settings → Git → connect the GitHub repo (auto-deploy on push)
 
+   `gh` is not required — create the repo on GitHub, then:
+
+```bash
+git remote add origin https://github.com/YOUR_USER/spellbrawl.git
+git push -u origin main
+vercel git connect
+```
+
+4. Enable **Anonymous sign-ins** in [Supabase Auth](https://supabase.com/dashboard/project/nunlfinypmuktgyzfult/auth/providers)
+
 ## Environment variables
 
 Copy `.env.example` to `.env.local` for development. Set the same keys in **Vercel → Environment Variables**:
@@ -62,7 +72,9 @@ Copy `.env.example` to `.env.local` for development. Set the same keys in **Verc
 |-----|---------|
 | `VITE_SUPABASE_URL` | Supabase project API URL |
 | `VITE_SUPABASE_ANON_KEY` | Supabase publishable/anon key (safe in browser) |
-| `VITE_PARTYKIT_HOST` | PartyKit WebSocket host for online battles |
+| `VITE_PARTYKIT_HOST` | PartyKit deploy host (e.g. `spellbrawl.<user>.partykit.dev`) or `127.0.0.1:1999` for local dev |
+
+Run `npm run dev:party` alongside `npm run dev` for local online battles. Deploy the PartyKit server with `npm run party:deploy` and set `VITE_PARTYKIT_HOST` in Vercel to the deploy URL.
 
 Run the SQL in `supabase/migrations/` after creating a Supabase project. Enable **Anonymous sign-ins** in Auth settings for guest mode.
 
