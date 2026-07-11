@@ -1,14 +1,13 @@
-import type * as Party from 'partykit/server';
+import { Server, type Connection } from 'partyserver';
 import { grantBoon, rollDraft } from '../src/game/boons';
 import { ROUNDS_TO_WIN } from '../src/game/constants';
 import { ArenaSim, fighterColors } from '../src/game/sim/arena-sim';
-import type { PlayerInput } from '../src/game/sim/types';
-import type { BoonSnap, LobbyPlayer, RoomPhase } from '../src/game/sim/types';
+import type { PlayerInput, BoonSnap, LobbyPlayer, RoomPhase } from '../src/game/sim/types';
 import type { Fighter } from '../src/game/match';
 import type { OwnedBoon } from '../src/game/types';
 
 const MAX_PLAYERS = 4;
-const TICK_MS = 50; // 20 Hz authoritative sim
+const TICK_MS = 50;
 
 interface PlayerRec {
   connId: string;
@@ -19,6 +18,7 @@ interface PlayerRec {
 }
 
 function boonToSnap(b: OwnedBoon): BoonSnap {
+  const mult = b.rarity === 'common' ? 1 : b.rarity === 'rare' ? 1.5 : 2.2;
   return {
     id: b.def.id,
     name: b.def.name,
@@ -26,11 +26,11 @@ function boonToSnap(b: OwnedBoon): BoonSnap {
     slot: b.def.slot,
     rarity: b.rarity,
     level: b.level,
-    describe: b.def.describe(b.level * (b.rarity === 'common' ? 1 : b.rarity === 'rare' ? 1.5 : 2.2)),
+    describe: b.def.describe(b.level * mult),
   };
 }
 
-export default class SpellbrawlRoom implements Party.Server {
+export class SpellbrawlRoom extends Server {
   phase: RoomPhase = 'lobby';
   players = new Map<string, PlayerRec>();
   hostId: string | null = null;
@@ -43,16 +43,14 @@ export default class SpellbrawlRoom implements Party.Server {
   tickHandle: ReturnType<typeof setInterval> | null = null;
   simTick = 0;
 
-  constructor(readonly room: Party.Room) {}
-
-  onConnect(conn: Party.Connection): void {
-    conn.send(JSON.stringify({ t: 'hello', code: this.room.id.toUpperCase() }));
-    this.sendLobby(conn);
+  onConnect(connection: Connection): void {
+    connection.send(JSON.stringify({ t: 'hello', code: this.name.toUpperCase() }));
+    this.sendLobby(connection);
   }
 
-  onClose(conn: Party.Connection): void {
-    this.players.delete(conn.id);
-    if (this.hostId === conn.id) {
+  onClose(connection: Connection): void {
+    this.players.delete(connection.id);
+    if (this.hostId === connection.id) {
       this.hostId = this.players.keys().next().value?.toString() ?? null;
     }
     if (this.players.size === 0) {
@@ -64,7 +62,7 @@ export default class SpellbrawlRoom implements Party.Server {
     this.broadcastLobby();
   }
 
-  onMessage(raw: string | ArrayBuffer, sender: Party.Connection): void {
+  onMessage(connection: Connection, raw: string | ArrayBuffer): void {
     let msg: { t: string; [k: string]: unknown };
     try {
       msg = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw));
@@ -74,19 +72,19 @@ export default class SpellbrawlRoom implements Party.Server {
 
     switch (msg.t) {
       case 'join':
-        this.handleJoin(sender, String(msg.name ?? 'Wizard'), msg.userId as string | undefined);
+        this.handleJoin(connection, String(msg.name ?? 'Wizard'), msg.userId as string | undefined);
         break;
       case 'ready':
-        this.setReady(sender, Boolean(msg.value));
+        this.setReady(connection, Boolean(msg.value));
         break;
       case 'start':
-        this.handleStart(sender);
+        this.handleStart(connection);
         break;
       case 'input':
-        this.handleInput(sender, msg);
+        this.handleInput(connection, msg);
         break;
       case 'draft':
-        this.handleDraftPick(sender, Number(msg.index));
+        this.handleDraftPick(connection, Number(msg.index));
         break;
       case 'leave_match':
         this.returnToLobby();
@@ -94,7 +92,7 @@ export default class SpellbrawlRoom implements Party.Server {
     }
   }
 
-  private handleJoin(conn: Party.Connection, name: string, userId?: string): void {
+  private handleJoin(conn: Connection, name: string, userId?: string): void {
     if (this.phase !== 'lobby' && this.phase !== 'match_results') {
       conn.send(JSON.stringify({ t: 'err', msg: 'Match in progress' }));
       return;
@@ -119,14 +117,14 @@ export default class SpellbrawlRoom implements Party.Server {
     this.broadcastLobby();
   }
 
-  private setReady(conn: Party.Connection, value: boolean): void {
+  private setReady(conn: Connection, value: boolean): void {
     const p = this.players.get(conn.id);
     if (!p) return;
     p.ready = value;
     this.broadcastLobby();
   }
 
-  private handleStart(conn: Party.Connection): void {
+  private handleStart(conn: Connection): void {
     if (conn.id !== this.hostId) {
       conn.send(JSON.stringify({ t: 'err', msg: 'Only the host can start' }));
       return;
@@ -171,10 +169,10 @@ export default class SpellbrawlRoom implements Party.Server {
         );
       }
     }
-    this.room.broadcast(JSON.stringify({ t: 'draft_wait', round: this.round }));
+    this.broadcast(JSON.stringify({ t: 'draft_wait', round: this.round }));
   }
 
-  private handleDraftPick(conn: Party.Connection, index: number): void {
+  private handleDraftPick(conn: Connection, index: number): void {
     const rec = this.players.get(conn.id);
     if (!rec || this.phase !== 'draft') return;
     const offers = this.draftOffers.get(rec.slot);
@@ -193,10 +191,13 @@ export default class SpellbrawlRoom implements Party.Server {
 
   private beginArena(): void {
     this.phase = 'arena';
-    this.sim = new ArenaSim(this.fighters, { round: this.round, seed: hashCode(this.room.id) + this.round });
+    this.sim = new ArenaSim(this.fighters, {
+      round: this.round,
+      seed: hashCode(this.name) + this.round,
+    });
     this.simTick = 0;
     this.latestInput.clear();
-    this.room.broadcast(JSON.stringify({ t: 'arena_start', round: this.round }));
+    this.broadcast(JSON.stringify({ t: 'arena_start', round: this.round }));
     this.startSimLoop();
   }
 
@@ -225,7 +226,7 @@ export default class SpellbrawlRoom implements Party.Server {
     this.simTick++;
 
     const snap = sim.getSnapshot(this.simTick);
-    this.room.broadcast(JSON.stringify({ t: 'state', snap }));
+    this.broadcast(JSON.stringify({ t: 'state', snap }));
 
     if (sim.roundEnded) {
       const matchOver = sim.consumeRoundEnd();
@@ -234,7 +235,7 @@ export default class SpellbrawlRoom implements Party.Server {
       if (matchOver) {
         this.phase = 'match_results';
         const winner = this.fighters.find((f) => f.roundWins >= ROUNDS_TO_WIN) ?? null;
-        this.room.broadcast(
+        this.broadcast(
           JSON.stringify({
             t: 'match_end',
             winnerId: winner?.id ?? null,
@@ -244,13 +245,12 @@ export default class SpellbrawlRoom implements Party.Server {
               roundWins: f.roundWins,
               color: f.color,
             })),
-            stats: sim.statsTracker.getAll(),
+            stats: Object.fromEntries(sim.statsTracker.getAll()),
           }),
         );
       } else {
         this.phase = 'round_results';
-        this.round = sim.fighters[0] ? this.round + 1 : this.round;
-        this.room.broadcast(
+        this.broadcast(
           JSON.stringify({
             t: 'round_end',
             winnerId: sim.roundWinner?.id ?? null,
@@ -268,7 +268,7 @@ export default class SpellbrawlRoom implements Party.Server {
     }
   }
 
-  private handleInput(conn: Party.Connection, msg: { [k: string]: unknown }): void {
+  private handleInput(conn: Connection, msg: { [k: string]: unknown }): void {
     const rec = this.players.get(conn.id);
     if (!rec || this.phase !== 'arena') return;
     this.latestInput.set(rec.slot, {
@@ -293,8 +293,8 @@ export default class SpellbrawlRoom implements Party.Server {
     this.broadcastLobby();
   }
 
-  private connForSlot(slot: number): Party.Connection | undefined {
-    for (const conn of this.room.getConnections()) {
+  private connForSlot(slot: number): Connection | undefined {
+    for (const conn of this.getConnections()) {
       const rec = this.players.get(conn.id);
       if (rec?.slot === slot) return conn;
     }
@@ -314,11 +314,11 @@ export default class SpellbrawlRoom implements Party.Server {
       }));
   }
 
-  private sendLobby(conn: Party.Connection): void {
+  private sendLobby(conn: Connection): void {
     conn.send(
       JSON.stringify({
         t: 'lobby',
-        code: this.room.id.toUpperCase(),
+        code: this.name.toUpperCase(),
         hostId: this.hostId,
         phase: this.phase,
         players: this.lobbyPlayers(),
@@ -328,10 +328,10 @@ export default class SpellbrawlRoom implements Party.Server {
   }
 
   private broadcastLobby(): void {
-    this.room.broadcast(
+    this.broadcast(
       JSON.stringify({
         t: 'lobby',
-        code: this.room.id.toUpperCase(),
+        code: this.name.toUpperCase(),
         hostId: this.hostId,
         phase: this.phase,
         players: this.lobbyPlayers(),

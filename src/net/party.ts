@@ -22,7 +22,7 @@ export type ServerMessage =
 
 function partyHost(): string {
   const h = import.meta.env.VITE_PARTYKIT_HOST;
-  if (!h) return '127.0.0.1:1999';
+  if (!h) return 'localhost:8787';
   if (h.startsWith('http')) return new URL(h).host;
   return h;
 }
