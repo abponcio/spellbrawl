@@ -50,11 +50,7 @@ git remote add origin https://github.com/abponcio/spellbrawl.git
 git push -u origin main
 ```
 
-3. Link Vercel to GitHub for auto-deploy on push:
-   - Open [Vercel → Account Settings → Login Connections](https://vercel.com/account/login-connections) and connect GitHub
-   - Then **Project → Settings → Git → Connect Git Repository** → select `abponcio/spellbrawl`
-
-   Or from CLI after connecting GitHub in Vercel: `vercel git connect`
+3. Link Vercel to GitHub for auto-deploy on push — **connected** (`abponcio/spellbrawl` → production on every `main` push)
 
 4. Enable **Anonymous sign-ins** in [Supabase Auth](https://supabase.com/dashboard/project/nunlfinypmuktgyzfult/auth/providers)
 
