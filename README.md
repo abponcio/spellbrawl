@@ -6,7 +6,8 @@ Smash Bros-style knockback health: hits build your **Pressure %**, and the highe
 climbs, the further you fly. Get pushed off the arena and you lose a stock.
 
 **Live:** https://spellbrawl.vercel.app  
-**Repo:** https://github.com/abponcio/spellbrawl
+**Repo:** https://github.com/abponcio/spellbrawl  
+**Deploy:** pushes to `main` auto-deploy via Vercel Git
 
 ## Controls
 
