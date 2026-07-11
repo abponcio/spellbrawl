@@ -1,0 +1,5 @@
+{
+  "name": "spellbrawl",
+  "main": "party/spellbrawl.ts",
+  "compatibilityDate": "2024-11-01"
+}

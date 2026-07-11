@@ -8,7 +8,7 @@ interface Button {
   label: string;
   sub: string;
   enemies?: number;
-  action?: 'online' | 'settings';
+  action?: 'online' | 'settings' | 'account';
   x: number;
   y: number;
   w: number;
@@ -34,6 +34,7 @@ export class MenuScene implements Scene {
         ) {
           if (b.action === 'online') this.ctx.toLobby();
           else if (b.action === 'settings') this.ctx.toSettings();
+          else if (b.action === 'account') this.ctx.toAccount();
           else if (b.enemies !== undefined) this.ctx.startMatch(b.enemies);
           return;
         }
@@ -99,6 +100,7 @@ export class MenuScene implements Scene {
       { label: 'DUEL', sub: '1 rival wizard', enemies: 1 },
       { label: 'SKIRMISH', sub: '2 rival wizards', enemies: 2 },
       { label: 'CHAOS', sub: '3 rival wizards — free-for-all', enemies: 3 },
+      { label: 'ACCOUNT', sub: 'stats · guest progress', action: 'account' as const },
       { label: 'SETTINGS', sub: 'AI difficulty · audio', action: 'settings' as const },
     ];
     const bw = 320;

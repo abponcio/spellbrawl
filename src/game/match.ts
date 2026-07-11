@@ -41,6 +41,23 @@ export class Match {
     return this.fighters[0];
   }
 
+  /** Online room: up to 4 human fighters; localSlot marks the local player. */
+  static forOnline(
+    slots: { name: string; color: string; roundWins?: number }[],
+    localSlot: number,
+  ): Match {
+    const m = new Match(0);
+    m.fighters = slots.map((s, i) => ({
+      id: i,
+      name: s.name,
+      color: s.color,
+      isPlayer: i === localSlot,
+      boons: [],
+      roundWins: s.roundWins ?? 0,
+    }));
+    return m;
+  }
+
   /** Award a round win; returns true if that ended the match. */
   scoreRound(winner: Fighter | null): boolean {
     if (winner) {
