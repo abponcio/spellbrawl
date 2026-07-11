@@ -2,6 +2,7 @@ import type { Scene } from '../engine/scene';
 import type { GameCtx } from '../game/context';
 import { isSupabaseConfigured } from '../net/supabase';
 import { loadAccountSummary, type AccountSummary } from '../net/profile';
+import { loadSettings, saveSettings } from '../game/settings';
 import { roundedRect } from '../ui/text';
 
 export class AccountScene implements Scene {
@@ -22,6 +23,9 @@ export class AccountScene implements Scene {
         this.summary = s;
         this.loading = false;
         if (!s) this.status = 'Could not load account data.';
+        else if (s.profile?.display_name) {
+          saveSettings({ ...loadSettings(), displayName: s.profile.display_name });
+        }
       });
     } else {
       this.loading = false;

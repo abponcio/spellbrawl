@@ -16,6 +16,7 @@ export class Match {
   fighters: Fighter[];
   round = 1;
   winner: Fighter | null = null;
+  isOnline = false;
   /** AI draft picks from the most recent draft, for announcing to the player. */
   lastAiPicks: { fighter: Fighter; boon: OwnedBoon }[] = [];
   /** The player's most recent draft pick, shown during the round countdown. */
@@ -47,6 +48,7 @@ export class Match {
     localSlot: number,
   ): Match {
     const m = new Match(0);
+    m.isOnline = true;
     m.fighters = slots.map((s, i) => ({
       id: i,
       name: s.name,

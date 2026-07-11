@@ -21,7 +21,19 @@ export async function pullCloudSettings(): Promise<void> {
     .eq('user_id', uid)
     .maybeSingle();
 
-  if (error || !data) return;
+  const { data: profile } = await sb
+    .from('profiles')
+    .select('display_name')
+    .eq('id', uid)
+    .maybeSingle();
+
+  if (error || !data) {
+    if (profile?.display_name) {
+      const local = loadSettings();
+      saveSettings({ ...local, displayName: profile.display_name });
+    }
+    return;
+  }
 
   const local = loadSettings();
   const merged: GameSettings = {
@@ -30,6 +42,7 @@ export async function pullCloudSettings(): Promise<void> {
     sfxVolume: data.sfx_volume ?? local.sfxVolume,
     screenShake: data.screen_shake ?? local.screenShake,
     aiDifficulty: isDifficulty(data.ai_difficulty) ? data.ai_difficulty : local.aiDifficulty,
+    displayName: profile?.display_name ?? local.displayName,
   };
   saveSettings(merged);
 }

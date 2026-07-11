@@ -79,7 +79,8 @@ export interface BoonSnap {
   school: string;
   slot: string;
   rarity: string;
-  level: number;
+  wild: boolean;
+  archetype: string;
   describe: string;
 }
 

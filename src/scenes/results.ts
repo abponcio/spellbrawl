@@ -17,8 +17,10 @@ export class ResultsScene implements Scene {
     if (!this.persisted) {
       this.persisted = true;
       const match = this.ctx.match!;
-      const ps = match.statsTracker.get(match.player.id);
-      void persistSoloMatch(match, ps);
+      if (!match.isOnline) {
+        const ps = match.statsTracker.get(match.player.id);
+        void persistSoloMatch(match, ps);
+      }
     }
   }
 

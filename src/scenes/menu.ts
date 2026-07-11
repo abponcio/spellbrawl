@@ -2,6 +2,7 @@ import { getAsset } from '../engine/assets';
 import type { Scene } from '../engine/scene';
 import { SCHOOL_COLORS } from '../game/constants';
 import type { GameCtx } from '../game/context';
+import { isPartyConfigured } from '../net/party';
 import { roundedRect } from '../ui/text';
 
 interface Button {
@@ -9,6 +10,7 @@ interface Button {
   sub: string;
   enemies?: number;
   action?: 'online' | 'settings' | 'account';
+  disabled?: boolean;
   x: number;
   y: number;
   w: number;
@@ -32,6 +34,7 @@ export class MenuScene implements Scene {
           input.mouse.y >= b.y &&
           input.mouse.y <= b.y + b.h
         ) {
+          if (b.disabled) return;
           if (b.action === 'online') this.ctx.toLobby();
           else if (b.action === 'settings') this.ctx.toSettings();
           else if (b.action === 'account') this.ctx.toAccount();
@@ -95,8 +98,14 @@ export class MenuScene implements Scene {
     g.fillText('Build your pressure. Break their footing. Knock them off the world.', W / 2, H * 0.33);
 
     // buttons
+    const onlineAvailable = isPartyConfigured();
     const defs = [
-      { label: 'PLAY ONLINE', sub: 'room code · up to 4 players', action: 'online' as const },
+      {
+        label: onlineAvailable ? 'PLAY ONLINE' : 'PLAY ONLINE (unavailable)',
+        sub: onlineAvailable ? 'room code · up to 4 players' : 'server not configured',
+        action: 'online' as const,
+        disabled: !onlineAvailable,
+      },
       { label: 'DUEL', sub: '1 rival wizard', enemies: 1 },
       { label: 'SKIRMISH', sub: '2 rival wizards', enemies: 2 },
       { label: 'CHAOS', sub: '3 rival wizards — free-for-all', enemies: 3 },
@@ -115,20 +124,25 @@ export class MenuScene implements Scene {
 
     for (const b of this.buttons) {
       const hover =
+        !b.disabled &&
         input.mouse.x >= b.x &&
         input.mouse.x <= b.x + b.w &&
         input.mouse.y >= b.y &&
         input.mouse.y <= b.y + b.h;
-      g.fillStyle = hover ? 'rgba(80, 90, 200, 0.35)' : 'rgba(20, 22, 48, 0.85)';
+      g.fillStyle = b.disabled
+        ? 'rgba(20, 22, 48, 0.5)'
+        : hover
+          ? 'rgba(80, 90, 200, 0.35)'
+          : 'rgba(20, 22, 48, 0.85)';
       roundedRect(g, b.x, b.y, b.w, b.h, 12);
       g.fill();
-      g.strokeStyle = hover ? '#8f9dff' : 'rgba(130, 140, 255, 0.4)';
-      g.lineWidth = hover ? 2.5 : 1.5;
+      g.strokeStyle = b.disabled ? 'rgba(80, 90, 120, 0.3)' : hover ? '#8f9dff' : 'rgba(130, 140, 255, 0.4)';
+      g.lineWidth = hover && !b.disabled ? 2.5 : 1.5;
       roundedRect(g, b.x, b.y, b.w, b.h, 12);
       g.stroke();
 
       g.font = '800 24px system-ui, sans-serif';
-      g.fillStyle = '#ffffff';
+      g.fillStyle = b.disabled ? 'rgba(150, 160, 200, 0.5)' : '#ffffff';
       g.fillText(b.label, W / 2, b.y + 28);
       g.font = '500 14px system-ui, sans-serif';
       g.fillStyle = 'rgba(200, 205, 245, 0.7)';

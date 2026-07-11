@@ -1,13 +1,15 @@
 import { Server, type Connection } from 'partyserver';
 import { grantBoon, rollDraft } from '../src/game/boons';
 import { ROUNDS_TO_WIN } from '../src/game/constants';
+import { boonArchetypeLabel } from '../src/game/skills';
 import { ArenaSim, fighterColors } from '../src/game/sim/arena-sim';
 import type { PlayerInput, BoonSnap, LobbyPlayer, RoomPhase } from '../src/game/sim/types';
 import type { Fighter } from '../src/game/match';
-import type { OwnedBoon } from '../src/game/types';
+import { RARITY_MULT, type OwnedBoon } from '../src/game/types';
 
 const MAX_PLAYERS = 4;
 const TICK_MS = 50;
+const DRAFT_TIMEOUT_MS = 30_000;
 
 interface PlayerRec {
   connId: string;
@@ -18,15 +20,15 @@ interface PlayerRec {
 }
 
 function boonToSnap(b: OwnedBoon): BoonSnap {
-  const mult = b.rarity === 'common' ? 1 : b.rarity === 'rare' ? 1.5 : 2.2;
   return {
     id: b.def.id,
     name: b.def.name,
     school: b.def.school,
     slot: b.def.slot,
     rarity: b.rarity,
-    level: b.level,
-    describe: b.def.describe(b.level * mult),
+    wild: Boolean(b.def.wild),
+    archetype: boonArchetypeLabel(b.def, b.rarity),
+    describe: b.def.describe(RARITY_MULT[b.rarity]),
   };
 }
 
@@ -41,6 +43,8 @@ export class SpellbrawlRoom extends Server {
   draftPicked = new Set<number>();
   latestInput = new Map<number, PlayerInput>();
   tickHandle: ReturnType<typeof setInterval> | null = null;
+  draftTimeout: ReturnType<typeof setTimeout> | null = null;
+  slotUserIds = new Map<number, string>();
   simTick = 0;
 
   onConnect(connection: Connection): void {
@@ -49,15 +53,23 @@ export class SpellbrawlRoom extends Server {
   }
 
   onClose(connection: Connection): void {
+    const rec = this.players.get(connection.id);
     this.players.delete(connection.id);
     if (this.hostId === connection.id) {
       this.hostId = this.players.keys().next().value?.toString() ?? null;
     }
+
+    if (this.phase === 'draft' && rec) {
+      this.autoPickForSlot(rec.slot);
+    }
+
     if (this.players.size === 0) {
       this.stopSim();
+      this.clearDraftTimeout();
       this.phase = 'lobby';
       this.sim = null;
       this.fighters = [];
+      this.slotUserIds.clear();
     }
     this.broadcastLobby();
   }
@@ -93,11 +105,33 @@ export class SpellbrawlRoom extends Server {
   }
 
   private handleJoin(conn: Connection, name: string, userId?: string): void {
+    if (this.players.has(conn.id)) return;
+
+    if (userId && this.phase !== 'lobby' && this.phase !== 'match_results') {
+      for (const [slot, uid] of this.slotUserIds) {
+        if (uid === userId && !this.connForSlot(slot)) {
+          const fighter = this.fighters[slot];
+          const rec: PlayerRec = {
+            connId: conn.id,
+            slot,
+            name: (fighter?.name ?? name.slice(0, 16)) || 'Wizard',
+            userId,
+            ready: true,
+          };
+          this.players.set(conn.id, rec);
+          this.sendResync(conn, slot);
+          this.broadcastLobby();
+          return;
+        }
+      }
+      conn.send(JSON.stringify({ t: 'err', msg: 'Match in progress' }));
+      return;
+    }
+
     if (this.phase !== 'lobby' && this.phase !== 'match_results') {
       conn.send(JSON.stringify({ t: 'err', msg: 'Match in progress' }));
       return;
     }
-    if (this.players.has(conn.id)) return;
     if (this.players.size >= MAX_PLAYERS) {
       conn.send(JSON.stringify({ t: 'err', msg: 'Room is full (4 players max)' }));
       return;
@@ -135,16 +169,26 @@ export class SpellbrawlRoom extends Server {
     }
     if (this.phase !== 'lobby') return;
 
+    const allReady = [...this.players.values()].every((p) => p.ready);
+    if (!allReady) {
+      conn.send(JSON.stringify({ t: 'err', msg: 'All players must be ready' }));
+      return;
+    }
+
+    this.slotUserIds.clear();
     this.fighters = [...this.players.values()]
       .sort((a, b) => a.slot - b.slot)
-      .map((p, i) => ({
-        id: i,
-        name: p.name,
-        color: fighterColors[i] ?? fighterColors[0],
-        isPlayer: false,
-        boons: [] as OwnedBoon[],
-        roundWins: 0,
-      }));
+      .map((p, i) => {
+        if (p.userId) this.slotUserIds.set(i, p.userId);
+        return {
+          id: i,
+          name: p.name,
+          color: fighterColors[i] ?? fighterColors[0],
+          isPlayer: false,
+          boons: [] as OwnedBoon[],
+          roundWins: 0,
+        };
+      });
 
     this.round = 1;
     this.beginDraft();
@@ -154,6 +198,7 @@ export class SpellbrawlRoom extends Server {
     this.phase = 'draft';
     this.draftOffers.clear();
     this.draftPicked.clear();
+    this.clearDraftTimeout();
 
     for (const f of this.fighters) {
       const offers = rollDraft(f.boons);
@@ -164,12 +209,50 @@ export class SpellbrawlRoom extends Server {
           JSON.stringify({
             t: 'draft',
             offers: offers.map(boonToSnap),
+            build: f.boons.map(boonToSnap),
             round: this.round,
           }),
         );
       }
     }
     this.broadcast(JSON.stringify({ t: 'draft_wait', round: this.round }));
+
+    this.draftTimeout = setTimeout(() => {
+      if (this.phase !== 'draft') return;
+      for (const f of this.fighters) {
+        this.autoPickForSlot(f.id);
+      }
+    }, DRAFT_TIMEOUT_MS);
+  }
+
+  private autoPickForSlot(slot: number): void {
+    if (this.phase !== 'draft' || this.draftPicked.has(slot)) return;
+    const offers = this.draftOffers.get(slot);
+    if (!offers?.length) {
+      this.draftPicked.add(slot);
+      this.checkDraftComplete();
+      return;
+    }
+    const pick = offers[0];
+    const fighter = this.fighters[slot];
+    if (!fighter) return;
+    grantBoon(fighter.boons, pick);
+    this.draftPicked.add(slot);
+    this.checkDraftComplete();
+  }
+
+  private checkDraftComplete(): void {
+    if (this.draftPicked.size >= this.fighters.length) {
+      this.clearDraftTimeout();
+      this.beginArena();
+    }
+  }
+
+  private clearDraftTimeout(): void {
+    if (this.draftTimeout) {
+      clearTimeout(this.draftTimeout);
+      this.draftTimeout = null;
+    }
   }
 
   private handleDraftPick(conn: Connection, index: number): void {
@@ -184,12 +267,11 @@ export class SpellbrawlRoom extends Server {
     grantBoon(fighter.boons, pick);
     this.draftPicked.add(rec.slot);
 
-    if (this.draftPicked.size >= this.fighters.length) {
-      this.beginArena();
-    }
+    this.checkDraftComplete();
   }
 
   private beginArena(): void {
+    this.clearDraftTimeout();
     this.phase = 'arena';
     this.sim = new ArenaSim(this.fighters, {
       round: this.round,
@@ -284,13 +366,45 @@ export class SpellbrawlRoom extends Server {
 
   private returnToLobby(): void {
     this.stopSim();
+    this.clearDraftTimeout();
     this.phase = 'lobby';
     this.sim = null;
     this.fighters = [];
     this.draftOffers.clear();
     this.draftPicked.clear();
+    this.slotUserIds.clear();
     for (const p of this.players.values()) p.ready = false;
     this.broadcastLobby();
+  }
+
+  private sendResync(conn: Connection, slot: number): void {
+    const fighter = this.fighters[slot];
+    if (!fighter) return;
+
+    if (this.phase === 'draft') {
+      const offers = this.draftOffers.get(slot) ?? [];
+      conn.send(
+        JSON.stringify({
+          t: 'draft',
+          offers: offers.map(boonToSnap),
+          build: fighter.boons.map(boonToSnap),
+          round: this.round,
+        }),
+      );
+      if (this.draftPicked.has(slot)) {
+        conn.send(JSON.stringify({ t: 'draft_wait', round: this.round }));
+      }
+    } else if (this.phase === 'arena' && this.sim) {
+      conn.send(JSON.stringify({ t: 'arena_start', round: this.round }));
+      conn.send(JSON.stringify({ t: 'state', snap: this.sim.getSnapshot(this.simTick) }));
+    } else if (this.phase === 'round_results') {
+      conn.send(JSON.stringify({ t: 'arena_start', round: this.round }));
+      if (this.sim) {
+        conn.send(JSON.stringify({ t: 'state', snap: this.sim.getSnapshot(this.simTick) }));
+      }
+    }
+
+    this.sendLobby(conn);
   }
 
   private connForSlot(slot: number): Connection | undefined {

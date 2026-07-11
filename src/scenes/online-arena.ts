@@ -8,6 +8,7 @@ import type { GameCtx } from '../game/context';
 import { renderHazard } from '../game/hazards';
 import type { SimSnapshot } from '../game/sim/types';
 import { partyClient } from '../net/party';
+import { roundedRect } from '../ui/text';
 
 export class OnlineArenaScene implements Scene {
   snap: SimSnapshot | null = null;
@@ -16,34 +17,22 @@ export class OnlineArenaScene implements Scene {
   time = 0;
   particles = new ParticleSystem();
   shake = new ScreenShake();
-  private unsub: (() => void) | null = null;
   private camView = WORLD_VIEW;
   private lastCountdownSecond = 4;
 
   constructor(private ctx: GameCtx) {}
 
   enter(): void {
-    this.snap = null;
+    this.snap = partyClient.latestSnap;
     this.prevSnap = null;
     this.time = 0;
     this.camView = (ARENA_RADIUS + 110) * 2;
     this.ctx.viewport.setWorldView(this.camView);
-
-    this.unsub = partyClient.on((msg) => {
-      if (msg.t === 'state') {
-        this.prevSnap = this.snap;
-        this.snap = msg.snap;
-        this.lerpT = 0;
-      }
-      if (msg.t === 'match_end') {
-        this.ctx.endOnlineMatch(msg);
-      }
-    });
+    this.lastCountdownSecond = 4;
   }
 
   exit(): void {
-    this.unsub?.();
-    this.unsub = null;
+    /* coordinator owns party routing */
   }
 
   update(dt: number): void {
@@ -51,6 +40,32 @@ export class OnlineArenaScene implements Scene {
     this.lerpT = Math.min(1, this.lerpT + dt * 10);
     this.particles.update(dt);
     this.shake.update(dt, this.ctx.viewport.shake);
+
+    if (partyClient.latestSnap) {
+      if (this.snap !== partyClient.latestSnap) {
+        this.prevSnap = this.snap;
+        this.snap = partyClient.latestSnap;
+        this.lerpT = 0;
+      }
+    }
+
+    const { input } = this.ctx;
+    if (input.wasClicked(0)) {
+      const W = this.ctx.viewport.width;
+      const H = this.ctx.viewport.height;
+      const leaveX = W - 110;
+      const leaveY = H - 44;
+      if (
+        input.mouse.x >= leaveX &&
+        input.mouse.x <= leaveX + 90 &&
+        input.mouse.y >= leaveY &&
+        input.mouse.y <= leaveY + 32
+      ) {
+        partyClient.leaveMatch();
+        this.ctx.toLobby();
+        return;
+      }
+    }
 
     const snap = this.snap;
     if (!snap || partyClient.mySlot < 0) return;
@@ -64,7 +79,7 @@ export class OnlineArenaScene implements Scene {
       if (snap.phaseTimer <= 0.1) sfx.fight();
     }
 
-    const { input, viewport } = this.ctx;
+    const { viewport } = this.ctx;
     const aim = viewport.screenToWorld(input.mouse);
     partyClient.sendInput({
       moveX: (input.isDown('KeyD') ? 1 : 0) - (input.isDown('KeyA') ? 1 : 0),
@@ -117,6 +132,7 @@ export class OnlineArenaScene implements Scene {
       g.fillStyle = '#fff';
       g.font = '600 18px system-ui, sans-serif';
       g.fillText('Connecting to arena…', W / 2, H / 2);
+      this.renderHudChrome(g, W, H);
       return;
     }
 
@@ -221,7 +237,6 @@ export class OnlineArenaScene implements Scene {
     this.particles.render(g);
     g.restore();
 
-    // HUD
     const me = snap.wizards.find((w) => w.id === partyClient.mySlot);
     g.textAlign = 'left';
     g.font = '700 16px system-ui, sans-serif';
@@ -253,9 +268,69 @@ export class OnlineArenaScene implements Scene {
       g.fillText(snap.banner, W / 2, H * 0.2);
     }
 
+    this.renderRoundEndOverlay(g, W, H);
+    this.renderHudChrome(g, W, H);
+  }
+
+  private renderRoundEndOverlay(g: CanvasRenderingContext2D, W: number, H: number): void {
+    const re = partyClient.roundEnd;
+    if (!re) return;
+
+    g.fillStyle = 'rgba(7, 7, 15, 0.55)';
+    g.fillRect(0, 0, W, H);
+
+    g.textAlign = 'center';
+    g.font = '800 40px system-ui, sans-serif';
+    g.fillStyle = '#ffe94d';
+    g.fillText(re.banner, W / 2, H * 0.32);
+
+    g.font = '600 16px system-ui, sans-serif';
+    g.fillStyle = 'rgba(220, 224, 255, 0.85)';
+    const lines = re.roundWins
+      .map((rw) => {
+        const fighter = this.ctx.match?.fighters.find((f) => f.id === rw.id);
+        return `${fighter?.name ?? `P${rw.id + 1}`}: ${rw.wins} round${rw.wins === 1 ? '' : 's'}`;
+      })
+      .join('   ·   ');
+    g.fillText(lines, W / 2, H * 0.42);
+
+    g.font = '500 14px system-ui, sans-serif';
+    g.fillStyle = 'rgba(180, 190, 240, 0.6)';
+    g.fillText('Next draft starting…', W / 2, H * 0.5);
+  }
+
+  private renderHudChrome(g: CanvasRenderingContext2D, W: number, H: number): void {
     g.textAlign = 'center';
     g.font = '500 13px system-ui, sans-serif';
     g.fillStyle = 'rgba(180, 190, 240, 0.5)';
     g.fillText(`Room ${partyClient.code}`, W / 2, H - 24);
+
+    const connColors: Record<string, string> = {
+      connected: '#5dffa8',
+      reconnecting: '#ffe94d',
+      connecting: '#ffe94d',
+      disconnected: '#ff6a5a',
+    };
+    g.font = '600 12px system-ui, sans-serif';
+    g.fillStyle = connColors[partyClient.connectionStatus] ?? '#888';
+    g.fillText(partyClient.connectionStatus.toUpperCase(), W / 2, 20);
+
+    if (partyClient.lastError) {
+      g.fillStyle = '#ff6a5a';
+      g.fillText(partyClient.lastError, W / 2, 38);
+    }
+
+    const leaveX = W - 110;
+    const leaveY = H - 44;
+    g.textAlign = 'center';
+    g.fillStyle = 'rgba(20, 22, 48, 0.9)';
+    roundedRect(g, leaveX, leaveY, 90, 32, 6);
+    g.fill();
+    g.strokeStyle = 'rgba(255, 90, 90, 0.5)';
+    roundedRect(g, leaveX, leaveY, 90, 32, 6);
+    g.stroke();
+    g.font = '600 13px system-ui, sans-serif';
+    g.fillStyle = '#ff8a8a';
+    g.fillText('LEAVE', leaveX + 45, leaveY + 16);
   }
 }
