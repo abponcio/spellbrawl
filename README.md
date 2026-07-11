@@ -5,7 +5,8 @@ drafting one of three random boons between every round (Hades-style), with
 Smash Bros-style knockback health: hits build your **Pressure %**, and the higher it
 climbs, the further you fly. Get pushed off the arena and you lose a stock.
 
-**Live:** https://spellbrawl.vercel.app
+**Live:** https://spellbrawl.vercel.app  
+**Repo:** https://github.com/abponcio/spellbrawl
 
 ## Controls
 
@@ -41,26 +42,18 @@ Copy `.env.example` to `.env.local`. For online battles locally, run **both** `d
 ## GitHub + Vercel deploy
 
 1. Create a repo on GitHub (e.g. `spellbrawl`)
-2. Push this project:
+2. Push this project (already done if you cloned from GitHub):
 
 ```bash
-git init
-git add .
-git commit -m "Spellbrawl: arena brawler with boons, stats, and online lobby UI"
-git branch -M main
-git remote add origin https://github.com/YOUR_USER/spellbrawl.git
+git remote add origin https://github.com/abponcio/spellbrawl.git
 git push -u origin main
 ```
 
-3. In Vercel → Project Settings → Git → connect the GitHub repo (auto-deploy on push)
+3. Link Vercel to GitHub for auto-deploy on push:
+   - Open [Vercel → Account Settings → Login Connections](https://vercel.com/account/login-connections) and connect GitHub
+   - Then **Project → Settings → Git → Connect Git Repository** → select `abponcio/spellbrawl`
 
-   `gh` is not required — create the repo on GitHub, then:
-
-```bash
-git remote add origin https://github.com/YOUR_USER/spellbrawl.git
-git push -u origin main
-vercel git connect
-```
+   Or from CLI after connecting GitHub in Vercel: `vercel git connect`
 
 4. Enable **Anonymous sign-ins** in [Supabase Auth](https://supabase.com/dashboard/project/nunlfinypmuktgyzfult/auth/providers)
 
